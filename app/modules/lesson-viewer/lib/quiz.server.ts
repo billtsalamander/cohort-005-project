@@ -62,6 +62,70 @@ export type QuestionResult = {
   correctOptionId: number | null;
 };
 
+function findCorrectOptionId(question: {
+  id: number;
+  questionType: string;
+}): number | null {
+  if (question.questionType === "multiple_choice") {
+    const opts = db
+      .select()
+      .from(quizOptions)
+      .where(eq(quizOptions.questionId, question.id))
+      .all();
+    const correctOpt = opts.find((o) => o.isCorrect === true);
+    return correctOpt ? correctOpt.id : null;
+  }
+  if (question.questionType === "true_false") {
+    const correctOpt = db
+      .select()
+      .from(quizOptions)
+      .where(
+        and(
+          eq(quizOptions.questionId, question.id),
+          eq(quizOptions.isCorrect, true)
+        )
+      )
+      .get();
+    return correctOpt ? correctOpt.id : null;
+  }
+  return null;
+}
+
+function recordAnswers(attemptId: number, questionResults: QuestionResult[]) {
+  for (const result of questionResults) {
+    if (result.selectedOptionId !== null) {
+      db.insert(quizAnswers)
+        .values({
+          attemptId,
+          questionId: result.questionId,
+          selectedOptionId: result.selectedOptionId,
+        })
+        .run();
+    }
+  }
+}
+
+function markQuestion(
+  question: { id: number; questionType: string },
+  selected: number | undefined
+): QuestionResult {
+  if (!selected) {
+    return {
+      questionId: question.id,
+      correct: false,
+      selectedOptionId: null,
+      correctOptionId: null,
+    };
+  }
+  const correctOptionId = findCorrectOptionId(question);
+  return {
+    questionId: question.id,
+    correct: selected === correctOptionId,
+    selectedOptionId: selected,
+    correctOptionId,
+  };
+}
+
 export function computeResult(
   userId: number,
   quizId: number,
@@ -81,57 +145,11 @@ export function computeResult(
       .orderBy(quizQuestions.position)
       .all();
 
-    let correct = 0;
+    const questionResults = questions.map((q) =>
+      markQuestion(q, selectedAnswers[q.id])
+    );
+    const correct = questionResults.filter((r) => r.correct).length;
     const total = questions.length;
-    const questionResults: QuestionResult[] = [];
-
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      const selected = selectedAnswers[q.id];
-
-      if (!selected) {
-        questionResults.push({
-          questionId: q.id,
-          correct: false,
-          selectedOptionId: null,
-          correctOptionId: null,
-        });
-        continue;
-      }
-
-      let correctOptionId = null;
-      if (q.questionType === "multiple_choice") {
-        const opts = db
-          .select()
-          .from(quizOptions)
-          .where(eq(quizOptions.questionId, q.id))
-          .all();
-        const correctOpt = opts.find((o) => o.isCorrect === true);
-        correctOptionId = correctOpt ? correctOpt.id : null;
-      } else if (q.questionType === "true_false") {
-        const correctOpt = db
-          .select()
-          .from(quizOptions)
-          .where(
-            and(
-              eq(quizOptions.questionId, q.id),
-              eq(quizOptions.isCorrect, true)
-            )
-          )
-          .get();
-        correctOptionId = correctOpt ? correctOpt.id : null;
-      }
-
-      const isCorrect = selected === correctOptionId;
-      if (isCorrect) correct++;
-
-      questionResults.push({
-        questionId: q.id,
-        correct: isCorrect,
-        selectedOptionId: selected,
-        correctOptionId,
-      });
-    }
 
     const scoreValue = total > 0 ? correct / total : 0;
     const passed = scoreValue > 0.7;
@@ -148,17 +166,7 @@ export function computeResult(
       .returning()
       .get();
 
-    for (const result of questionResults) {
-      if (result.selectedOptionId !== null) {
-        db.insert(quizAnswers)
-          .values({
-            attemptId: attempt.id,
-            questionId: result.questionId,
-            selectedOptionId: result.selectedOptionId,
-          })
-          .run();
-      }
-    }
+    recordAnswers(attempt.id, questionResults);
 
     return {
       attemptId: attempt.id,
