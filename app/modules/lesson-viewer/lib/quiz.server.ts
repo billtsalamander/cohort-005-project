@@ -91,18 +91,26 @@ function findCorrectOptionId(question: {
   return null;
 }
 
-function recordAnswers(attemptId: number, questionResults: QuestionResult[]) {
-  for (const result of questionResults) {
-    if (result.selectedOptionId !== null) {
-      db.insert(quizAnswers)
-        .values({
-          attemptId,
-          questionId: result.questionId,
-          selectedOptionId: result.selectedOptionId,
-        })
-        .run();
+/** Stores the attempt and its answers together, or neither. */
+function saveAttempt(
+  attempt: { userId: number; quizId: number; score: number; passed: boolean },
+  questionResults: QuestionResult[]
+) {
+  return db.transaction((tx) => {
+    const saved = tx.insert(quizAttempts).values(attempt).returning().get();
+    for (const result of questionResults) {
+      if (result.selectedOptionId !== null) {
+        tx.insert(quizAnswers)
+          .values({
+            attemptId: saved.id,
+            questionId: result.questionId,
+            selectedOptionId: result.selectedOptionId,
+          })
+          .run();
+      }
     }
-  }
+    return saved;
+  });
 }
 
 function markQuestion(
@@ -155,18 +163,10 @@ export function computeResult(
     const passed = scoreValue > 0.7;
     const grade = calculateGrade(scoreValue);
 
-    const attempt = db
-      .insert(quizAttempts)
-      .values({
-        userId,
-        quizId,
-        score: scoreValue,
-        passed,
-      })
-      .returning()
-      .get();
-
-    recordAnswers(attempt.id, questionResults);
+    const attempt = saveAttempt(
+      { userId, quizId, score: scoreValue, passed },
+      questionResults
+    );
 
     return {
       attemptId: attempt.id,
