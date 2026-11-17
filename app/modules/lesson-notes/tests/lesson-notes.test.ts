@@ -34,6 +34,20 @@ describe("describeNoteDraft", () => {
     expect(describeNoteDraft("   \n", "old").dirty).toBe(true);
   });
 
+  it("treats a saved note with surrounding whitespace in the box as saved", () => {
+    expect(describeNoteDraft("  same\n", "same")).toMatchObject({
+      dirty: false,
+      canSave: false,
+    });
+  });
+
+  it("measures the trimmed text against the limit, as the server does", () => {
+    const draft = describeNoteDraft(` ${"a".repeat(MAX_NOTE_LENGTH)} `, null);
+    expect(draft.length).toBe(MAX_NOTE_LENGTH);
+    expect(draft.tooLong).toBe(false);
+    expect(draft.canSave).toBe(true);
+  });
+
   it("allows a note exactly at the limit", () => {
     const draft = describeNoteDraft("a".repeat(MAX_NOTE_LENGTH), null);
     expect(draft.tooLong).toBe(false);
